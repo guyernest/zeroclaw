@@ -92,6 +92,10 @@ rustls-pki-types = "1.14.0"
 tokio-rustls = "0.26.4"
 webpki-roots = "1.0.6"
 
+# AWS Step Functions Activity channel
+aws-sdk-sfn = "1.64"
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+
 # HTTP server (gateway) — replaces raw TCP for proper HTTP/1.1 compliance
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
 tower = { version = "0.5", default-features = false }

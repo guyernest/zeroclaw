@@ -2239,6 +2239,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
         irc: None,
         lark: None,
         dingtalk: None,
+        activity: None,
     };
 
     loop {

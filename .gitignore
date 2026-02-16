@@ -5,3 +5,7 @@ firmware/*/target
 .DS_Store
 .wt-pr37/
 .env
+
+# PMAT generated artifacts
+context.md
+.pmat/

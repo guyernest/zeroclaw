@@ -1,3 +1,4 @@
+pub mod activity;
 pub mod cli;
 pub mod dingtalk;
 pub mod discord;
@@ -11,6 +12,7 @@ pub mod telegram;
 pub mod traits;
 pub mod whatsapp;
 
+pub use activity::ActivityChannel;
 pub use cli::CliChannel;
 pub use dingtalk::DingTalkChannel;
 pub use discord::DiscordChannel;
@@ -558,6 +560,7 @@ pub fn handle_command(command: crate::ChannelCommands, config: &Config) -> Resul
                 ("IRC", config.channels_config.irc.is_some()),
                 ("Lark", config.channels_config.lark.is_some()),
                 ("DingTalk", config.channels_config.dingtalk.is_some()),
+                ("Activity", config.channels_config.activity.is_some()),
             ] {
                 println!("  {} {name}", if configured { "✅" } else { "❌" });
             }
@@ -709,6 +712,13 @@ pub async fn doctor_channels(config: Config) -> Result<()> {
                 dt.allowed_users.clone(),
             )),
         ));
+    }
+
+    if let Some(ref act) = config.channels_config.activity {
+        match ActivityChannel::new(act).await {
+            Ok(ch) => channels.push(("Activity", Arc::new(ch))),
+            Err(e) => println!("  ❌ Activity  failed to initialize: {e}"),
+        }
     }
 
     if channels.is_empty() {
@@ -976,6 +986,16 @@ pub async fn start_channels(config: Config) -> Result<()> {
             dt.client_secret.clone(),
             dt.allowed_users.clone(),
         )));
+    }
+
+    if let Some(ref act) = config.channels_config.activity {
+        match ActivityChannel::new(act).await {
+            Ok(ch) => channels.push(Arc::new(ch)),
+            Err(e) => {
+                tracing::error!("Failed to initialize Activity channel: {e}");
+                anyhow::bail!("Activity channel initialization failed: {e}");
+            }
+        }
     }
 
     if channels.is_empty() {

@@ -1254,6 +1254,7 @@ pub struct ChannelsConfig {
     pub irc: Option<IrcConfig>,
     pub lark: Option<LarkConfig>,
     pub dingtalk: Option<DingTalkConfig>,
+    pub activity: Option<ActivityChannelConfig>,
 }
 
 impl Default for ChannelsConfig {
@@ -1271,6 +1272,55 @@ impl Default for ChannelsConfig {
             irc: None,
             lark: None,
             dingtalk: None,
+            activity: None,
+        }
+    }
+}
+
+// ── Activity Channel (AWS Step Functions) ────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActivityChannelConfig {
+    /// ARN of the Step Functions Activity to poll
+    pub activity_arn: String,
+    /// Worker name reported to Step Functions
+    #[serde(default = "default_activity_worker_name")]
+    pub worker_name: String,
+    /// AWS profile to use (from ~/.aws/config)
+    #[serde(default)]
+    pub aws_profile: Option<String>,
+    /// AWS region override
+    #[serde(default)]
+    pub aws_region: Option<String>,
+    /// Interval (seconds) between heartbeat calls during task processing
+    #[serde(default = "default_heartbeat_interval_secs")]
+    pub heartbeat_interval_secs: u64,
+    /// Interval (milliseconds) between `GetActivityTask` polls when idle
+    #[serde(default = "default_activity_poll_interval_ms")]
+    pub poll_interval_ms: u64,
+}
+
+fn default_activity_worker_name() -> String {
+    "zeroclaw-local".into()
+}
+
+fn default_heartbeat_interval_secs() -> u64 {
+    30
+}
+
+fn default_activity_poll_interval_ms() -> u64 {
+    1000
+}
+
+impl Default for ActivityChannelConfig {
+    fn default() -> Self {
+        Self {
+            activity_arn: String::new(),
+            worker_name: default_activity_worker_name(),
+            aws_profile: None,
+            aws_region: None,
+            heartbeat_interval_secs: default_heartbeat_interval_secs(),
+            poll_interval_ms: default_activity_poll_interval_ms(),
         }
     }
 }
@@ -1935,6 +1985,7 @@ mod tests {
                 irc: None,
                 lark: None,
                 dingtalk: None,
+                activity: None,
             },
             memory: MemoryConfig::default(),
             tunnel: TunnelConfig::default(),
@@ -2227,6 +2278,7 @@ tool_dispatcher = "xml"
             irc: None,
             lark: None,
             dingtalk: None,
+            activity: None,
         };
         let toml_str = toml::to_string_pretty(&c).unwrap();
         let parsed: ChannelsConfig = toml::from_str(&toml_str).unwrap();
@@ -2387,6 +2439,7 @@ channel_id = "C123"
             irc: None,
             lark: None,
             dingtalk: None,
+            activity: None,
         };
         let toml_str = toml::to_string_pretty(&c).unwrap();
         let parsed: ChannelsConfig = toml::from_str(&toml_str).unwrap();
@@ -2914,5 +2967,87 @@ default_temperature = 0.7
         assert_eq!(parsed.boards.len(), 1);
         assert_eq!(parsed.boards[0].board, "nucleo-f401re");
         assert_eq!(parsed.boards[0].path.as_deref(), Some("/dev/ttyACM0"));
+    }
+
+    // ── Activity Channel config ─────────────────────────────────
+
+    #[test]
+    fn activity_config_defaults() {
+        let a = ActivityChannelConfig::default();
+        assert_eq!(a.worker_name, "zeroclaw-local");
+        assert_eq!(a.heartbeat_interval_secs, 30);
+        assert_eq!(a.poll_interval_ms, 1000);
+        assert!(a.activity_arn.is_empty());
+        assert!(a.aws_profile.is_none());
+        assert!(a.aws_region.is_none());
+    }
+
+    #[test]
+    fn activity_config_serde_roundtrip() {
+        let a = ActivityChannelConfig {
+            activity_arn: "arn:aws:states:us-east-1:123456789:activity:local-agent".into(),
+            worker_name: "my-worker".into(),
+            aws_profile: Some("dev".into()),
+            aws_region: Some("us-west-2".into()),
+            heartbeat_interval_secs: 15,
+            poll_interval_ms: 500,
+        };
+        let toml_str = toml::to_string(&a).unwrap();
+        let parsed: ActivityChannelConfig = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.activity_arn, a.activity_arn);
+        assert_eq!(parsed.worker_name, "my-worker");
+        assert_eq!(parsed.aws_profile.as_deref(), Some("dev"));
+        assert_eq!(parsed.aws_region.as_deref(), Some("us-west-2"));
+        assert_eq!(parsed.heartbeat_interval_secs, 15);
+        assert_eq!(parsed.poll_interval_ms, 500);
+    }
+
+    #[test]
+    fn activity_config_toml_with_defaults() {
+        let toml_str = r#"
+activity_arn = "arn:aws:states:us-east-1:123:activity:test"
+"#;
+        let parsed: ActivityChannelConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.worker_name, "zeroclaw-local");
+        assert_eq!(parsed.heartbeat_interval_secs, 30);
+        assert_eq!(parsed.poll_interval_ms, 1000);
+        assert!(parsed.aws_profile.is_none());
+    }
+
+    #[test]
+    fn channels_config_default_has_no_activity() {
+        let c = ChannelsConfig::default();
+        assert!(c.activity.is_none());
+    }
+
+    #[test]
+    fn channels_config_activity_in_full_config() {
+        let minimal = r#"
+workspace_dir = "/tmp/ws"
+config_path = "/tmp/config.toml"
+default_temperature = 0.7
+
+[channels_config]
+cli = true
+
+[channels_config.activity]
+activity_arn = "arn:aws:states:us-east-1:123:activity:test"
+"#;
+        let parsed: Config = toml::from_str(minimal).unwrap();
+        assert!(parsed.channels_config.activity.is_some());
+        let act = parsed.channels_config.activity.unwrap();
+        assert!(act.activity_arn.contains("activity:test"));
+        assert_eq!(act.worker_name, "zeroclaw-local");
+    }
+
+    #[test]
+    fn channels_config_backward_compat_no_activity() {
+        let minimal = r#"
+workspace_dir = "/tmp/ws"
+config_path = "/tmp/config.toml"
+default_temperature = 0.7
+"#;
+        let parsed: Config = toml::from_str(minimal).unwrap();
+        assert!(parsed.channels_config.activity.is_none());
     }
 }
