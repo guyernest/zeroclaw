@@ -6,6 +6,7 @@
 use super::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
+use std::fmt::Write;
 
 /// Static board info (datasheets). Used when probe-rs is unavailable.
 const BOARD_INFO: &[(&str, &str, &str)] = &[
@@ -124,10 +125,11 @@ impl Tool for HardwareBoardInfoTool {
                     });
                 }
                 Err(e) => {
-                    output.push_str(&format!(
+                    let _ = write!(
+                        output,
                         "probe-rs attach failed: {}. Using static info.\n\n",
                         e
-                    ));
+                    );
                 }
             }
         }
@@ -135,13 +137,14 @@ impl Tool for HardwareBoardInfoTool {
         if let Some(info) = self.static_info_for_board(board) {
             output.push_str(&info);
             if let Some(mem) = memory_map_static(board) {
-                output.push_str(&format!("\n\n**Memory map:**\n{}", mem));
+                let _ = write!(output, "\n\n**Memory map:**\n{}", mem);
             }
         } else {
-            output.push_str(&format!(
+            let _ = write!(
+                output,
                 "Board '{}' configured. No static info available.",
                 board
-            ));
+            );
         }
 
         Ok(ToolResult {

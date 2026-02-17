@@ -78,8 +78,7 @@ impl Tool for HardwareMemoryReadTool {
             .or_else(|| self.boards.first().cloned())
             .unwrap_or_else(|| "nucleo-f401re".into());
 
-        let chip = Self::chip_for_board(&board);
-        if chip.is_none() {
+        let Some(_chip) = Self::chip_for_board(&board) else {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
@@ -88,20 +87,21 @@ impl Tool for HardwareMemoryReadTool {
                     board
                 )),
             });
-        }
+        };
 
         let address_str = args
             .get("address")
             .and_then(|v| v.as_str())
             .unwrap_or("0x20000000");
-        let address = parse_hex_address(address_str).unwrap_or(NUCLEO_RAM_BASE);
+        let _address = parse_hex_address(address_str).unwrap_or(NUCLEO_RAM_BASE);
 
-        let length = args.get("length").and_then(|v| v.as_u64()).unwrap_or(128) as usize;
-        let length = length.min(256).max(1);
+        #[allow(clippy::cast_possible_truncation)]
+        let _length =
+            (args.get("length").and_then(|v| v.as_u64()).unwrap_or(128) as usize).clamp(1, 256);
 
         #[cfg(feature = "probe")]
         {
-            match probe_read_memory(chip.unwrap(), address, length) {
+            match probe_read_memory(_chip, address, length) {
                 Ok(output) => {
                     return Ok(ToolResult {
                         success: true,

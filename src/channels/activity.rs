@@ -27,8 +27,7 @@ impl ActivityChannel {
             aws_builder = aws_builder.profile_name(profile);
         }
         if let Some(ref region) = config.aws_region {
-            aws_builder = aws_builder
-                .region(aws_sdk_sfn::config::Region::new(region.to_owned()));
+            aws_builder = aws_builder.region(aws_sdk_sfn::config::Region::new(region.to_owned()));
         }
 
         let aws_config = aws_builder.load().await;
@@ -71,7 +70,10 @@ impl Channel for ActivityChannel {
             .await
             .map_err(|e| anyhow::anyhow!("SendTaskSuccess failed: {e}"))?;
 
-        tracing::info!("Activity task completed (token prefix: {}...)", &recipient[..recipient.len().min(12)]);
+        tracing::info!(
+            "Activity task completed (token prefix: {}...)",
+            &recipient[..recipient.len().min(12)]
+        );
         Ok(())
     }
 
@@ -153,12 +155,7 @@ impl Channel for ActivityChannel {
             let mut tick = tokio::time::interval(interval);
             loop {
                 tick.tick().await;
-                if let Err(e) = client
-                    .send_task_heartbeat()
-                    .task_token(&token)
-                    .send()
-                    .await
-                {
+                if let Err(e) = client.send_task_heartbeat().task_token(&token).send().await {
                     tracing::warn!("Activity heartbeat failed: {e}");
                     break;
                 }

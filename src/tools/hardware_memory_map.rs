@@ -7,6 +7,7 @@
 use super::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
+use std::fmt::Write;
 
 /// Known memory maps (from datasheets). Used when probe-rs is unavailable.
 const MEMORY_MAPS: &[(&str, &str)] = &[
@@ -104,11 +105,11 @@ impl Tool for HardwareMemoryMapTool {
                 };
                 match probe_rs_memory_map(chip) {
                     Ok(probe_msg) => {
-                        output.push_str(&format!("**{}** (via probe-rs):\n{}\n", board, probe_msg));
+                        let _ = write!(output, "**{}** (via probe-rs):\n{}\n", board, probe_msg);
                         true
                     }
                     Err(e) => {
-                        output.push_str(&format!("Probe-rs failed: {}. ", e));
+                        let _ = write!(output, "Probe-rs failed: {}. ", e);
                         false
                     }
                 }
@@ -122,14 +123,15 @@ impl Tool for HardwareMemoryMapTool {
 
         if !probe_ok {
             if let Some(map) = self.static_map_for_board(board) {
-                output.push_str(&format!("**{}** (from datasheet):\n{}", board, map));
+                let _ = write!(output, "**{}** (from datasheet):\n{}", board, map);
             } else {
                 let known: Vec<&str> = MEMORY_MAPS.iter().map(|(b, _)| *b).collect();
-                output.push_str(&format!(
+                let _ = write!(
+                    output,
                     "No memory map for board '{}'. Known boards: {}",
                     board,
                     known.join(", ")
-                ));
+                );
             }
         }
 

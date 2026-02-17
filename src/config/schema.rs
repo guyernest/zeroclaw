@@ -123,18 +123,13 @@ fn default_max_depth() -> u32 {
 // ── Hardware Config (wizard-driven) ─────────────────────────────
 
 /// Hardware transport mode.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HardwareTransport {
+    #[default]
     None,
     Native,
     Serial,
     Probe,
-}
-
-impl Default for HardwareTransport {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 impl std::fmt::Display for HardwareTransport {
@@ -172,7 +167,7 @@ pub struct HardwareConfig {
 }
 
 fn default_baud_rate() -> u32 {
-    115200
+    115_200
 }
 
 impl HardwareConfig {
@@ -406,7 +401,7 @@ fn get_default_pricing() -> std::collections::HashMap<String, ModelPricing> {
 
 // ── Peripherals (hardware: STM32, RPi GPIO, etc.) ────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PeripheralsConfig {
     /// Enable peripheral support (boards become agent tools)
     #[serde(default)]
@@ -440,17 +435,7 @@ fn default_peripheral_transport() -> String {
 }
 
 fn default_peripheral_baud() -> u32 {
-    115200
-}
-
-impl Default for PeripheralsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            boards: Vec::new(),
-            datasheet_dir: None,
-        }
-    }
+    115_200
 }
 
 impl Default for PeripheralBoardConfig {
@@ -708,6 +693,7 @@ fn default_http_timeout_secs() -> u64 {
 
 // ── Memory ───────────────────────────────────────────────────
 
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryConfig {
     /// "sqlite" | "lucid" | "markdown" | "none" (`none` = explicit no-op memory)
@@ -1332,19 +1318,14 @@ impl Default for ActivityChannelConfig {
 // ── MCP Server Configuration ─────────────────────────────────────
 
 /// Transport type for MCP server connections.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum McpTransportType {
     /// Spawn a child process communicating via stdin/stdout.
     Stdio,
     /// Connect to an HTTP endpoint (preferred for shareability).
+    #[default]
     Http,
-}
-
-impl Default for McpTransportType {
-    fn default() -> Self {
-        Self::Http
-    }
 }
 
 /// Configuration for an external MCP server whose tools are bridged into ZeroClaw.
@@ -1948,7 +1929,6 @@ fn sync_directory(_path: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use tempfile::TempDir;
 
     // ── Defaults ─────────────────────────────────────────────
 

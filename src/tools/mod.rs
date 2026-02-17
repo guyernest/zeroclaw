@@ -196,7 +196,7 @@ pub async fn init_mcp_tools(configs: &[crate::config::McpServerConfig]) -> Vec<B
             }
             Err(e) => {
                 tracing::error!("MCP server '{}' failed to connect: {e}", cfg.name);
-                crate::health::mark_component_error(&format!("mcp:{}", cfg.name), &e.to_string());
+                crate::health::mark_component_error(&format!("mcp:{}", cfg.name), e.to_string());
                 // Continue — one failure does NOT block others
             }
         }
