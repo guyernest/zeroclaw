@@ -22,6 +22,9 @@ release:
 clean:
     cargo clean
 
+install:
+    cargo install --path .
+
 # ── PMAT targets ─────────────────────────────────────────────────
 
 context:

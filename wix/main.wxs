@@ -1,0 +1,98 @@
+<?xml version='1.0' encoding='windows-1252'?>
+<!--
+  Copyright (C) 2024 theonlyhennygod
+
+  WiX installer for zeroclaw.
+  Build with: cargo wix --no-build --nocapture
+-->
+<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
+
+    <Product
+        Id='*'
+        Name='zeroclaw'
+        UpgradeCode='E8F2B3A1-4C5D-6E7F-8A9B-0C1D2E3F4A5B'
+        Manufacturer='theonlyhennygod'
+        Language='1033'
+        Codepage='1252'
+        Version='$(var.Version)'>
+
+        <Package Id='*'
+            Keywords='Installer'
+            Description='zeroclaw - The fastest, smallest AI assistant'
+            Manufacturer='theonlyhennygod'
+            InstallerVersion='450'
+            Languages='1033'
+            Compressed='yes'
+            InstallScope='perMachine'
+            SummaryCodepage='1252' />
+
+        <MajorUpgrade
+            Schedule='afterInstallInitialize'
+            DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.' />
+
+        <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1' />
+        <Property Id='DiskPrompt' Value='zeroclaw Installation' />
+
+        <Directory Id='TARGETDIR' Name='SourceDir'>
+            <Directory Id='ProgramFiles64Folder' Name='PFiles'>
+                <Directory Id='APPLICATIONFOLDER' Name='zeroclaw'>
+                    <Component Id='binary0' Guid='*' Win64='yes'>
+                        <File
+                            Id='exe0'
+                            Name='zeroclaw.exe'
+                            DiskId='1'
+                            Source='$(var.CargoTargetBinDir)\zeroclaw.exe'
+                            KeyPath='yes' />
+                    </Component>
+                </Directory>
+            </Directory>
+
+            <!-- Add to system PATH -->
+            <Component Id='Path' Guid='A1B2C3D4-E5F6-7890-ABCD-EF1234567890' Win64='yes' KeyPath='yes'>
+                <Environment
+                    Id='PATH'
+                    Name='PATH'
+                    Value='[APPLICATIONFOLDER]'
+                    Permanent='no'
+                    Part='last'
+                    Action='set'
+                    System='yes' />
+            </Component>
+        </Directory>
+
+        <Feature
+            Id='Binaries'
+            Title='Application'
+            Description='Installs the zeroclaw binary.'
+            Level='1'
+            ConfigurableDirectory='APPLICATIONFOLDER'
+            AllowAdvertise='no'
+            Display='expand'
+            Absent='disallow'>
+
+            <ComponentRef Id='binary0' />
+
+            <Feature
+                Id='Environment'
+                Title='PATH Environment Variable'
+                Description='Add zeroclaw to the system PATH so it can be run from any command prompt.'
+                Level='1'
+                Absent='allow'>
+                <ComponentRef Id='Path' />
+            </Feature>
+        </Feature>
+
+        <SetProperty Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]' After='CostFinalize' />
+
+        <Icon Id='ProductICO' SourceFile='wix\zeroclaw.ico' />
+        <Property Id='ARPPRODUCTICON' Value='ProductICO' />
+
+        <UI>
+            <UIRef Id='WixUI_FeatureTree' />
+            <Publish Dialog='WelcomeDlg' Control='Next' Event='NewDialog' Value='CustomizeDlg' Order='99'>1</Publish>
+            <Publish Dialog='CustomizeDlg' Control='Back' Event='NewDialog' Value='WelcomeDlg' Order='99'>1</Publish>
+        </UI>
+
+    </Product>
+
+</Wix>

@@ -66,11 +66,20 @@ jobs:
                   cd target/${{ matrix.target }}/release
                   7z a ../../../zeroclaw-${{ matrix.target }}.zip ${{ matrix.artifact }}
 
+            - name: Build MSI (Windows)
+              if: runner.os == 'Windows'
+              run: |
+                  cargo install cargo-wix
+                  cargo wix --no-build --nocapture --target ${{ matrix.target }}
+              continue-on-error: true
+
             - name: Upload artifact
               uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
               with:
                   name: zeroclaw-${{ matrix.target }}
-                  path: zeroclaw-${{ matrix.target }}.*
+                  path: |
+                      zeroclaw-${{ matrix.target }}.*
+                      target/wix/*.msi
 
     publish:
         name: Publish Release
@@ -88,7 +97,7 @@ jobs:
             - name: Generate SHA256 checksums
               run: |
                   cd artifacts
-                  find . -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec sha256sum {} + | sed 's|  \./[^/]*/|  |' > SHA256SUMS
+                  find . -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.msi' \) -exec sha256sum {} + | sed 's|  \./[^/]*/|  |' > SHA256SUMS
                   echo "Generated checksums:"
                   cat SHA256SUMS
 
