@@ -87,6 +87,10 @@ pub struct Config {
     /// Hardware configuration (wizard-driven physical world setup).
     #[serde(default)]
     pub hardware: HardwareConfig,
+
+    /// MCP server configurations for external tool integration.
+    #[serde(default)]
+    pub mcp_servers: Vec<McpServerConfig>,
 }
 
 // ── Delegate Agents ──────────────────────────────────────────────
@@ -1325,6 +1329,89 @@ impl Default for ActivityChannelConfig {
     }
 }
 
+// ── MCP Server Configuration ─────────────────────────────────────
+
+/// Transport type for MCP server connections.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum McpTransportType {
+    /// Spawn a child process communicating via stdin/stdout.
+    Stdio,
+    /// Connect to an HTTP endpoint (preferred for shareability).
+    Http,
+}
+
+impl Default for McpTransportType {
+    fn default() -> Self {
+        Self::Http
+    }
+}
+
+/// Configuration for an external MCP server whose tools are bridged into ZeroClaw.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerConfig {
+    /// Unique name for this MCP server (used in tool namespacing).
+    pub name: String,
+
+    /// Transport type: "stdio" spawns a child process, "http" connects to a URL.
+    #[serde(default)]
+    pub transport: McpTransportType,
+
+    // --- Stdio fields ---
+    /// Command to spawn (stdio only). Ignored for http.
+    #[serde(default)]
+    pub command: Option<String>,
+    /// Arguments for the command (stdio only).
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Extra environment variables for the child process (stdio only).
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+
+    // --- HTTP fields ---
+    /// URL of the MCP server (http only). e.g. "http://localhost:8080/mcp"
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Extra HTTP headers (http only). e.g. {"Authorization": "Bearer ..."}
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+
+    // --- Common fields ---
+    /// Whether this server is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Whitelist of tool names to expose. Empty = all tools.
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+    /// Blacklist of tool names to hide.
+    #[serde(default)]
+    pub blocked_tools: Vec<String>,
+    /// Auto-restart on crash (stdio only, ignored for http).
+    #[serde(default = "default_true")]
+    pub restart_on_crash: bool,
+    /// Maximum number of auto-restarts before giving up.
+    #[serde(default = "default_max_restarts")]
+    pub max_restarts: u32,
+    /// Timeout (seconds) for initial connection/handshake.
+    #[serde(default = "default_init_timeout_secs")]
+    pub init_timeout_secs: u64,
+    /// Timeout (seconds) for individual tool calls.
+    #[serde(default = "default_tool_call_timeout_secs")]
+    pub tool_call_timeout_secs: u64,
+}
+
+fn default_max_restarts() -> u32 {
+    3
+}
+
+fn default_init_timeout_secs() -> u64 {
+    30
+}
+
+fn default_tool_call_timeout_secs() -> u64 {
+    60
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TelegramConfig {
     pub bot_token: String,
@@ -1642,6 +1729,7 @@ impl Default for Config {
             peripherals: PeripheralsConfig::default(),
             agents: HashMap::new(),
             hardware: HardwareConfig::default(),
+            mcp_servers: Vec::new(),
         }
     }
 }
@@ -2000,6 +2088,7 @@ mod tests {
             peripherals: PeripheralsConfig::default(),
             agents: HashMap::new(),
             hardware: HardwareConfig::default(),
+            mcp_servers: Vec::new(),
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -2107,6 +2196,7 @@ tool_dispatcher = "xml"
             peripherals: PeripheralsConfig::default(),
             agents: HashMap::new(),
             hardware: HardwareConfig::default(),
+            mcp_servers: Vec::new(),
         };
 
         config.save().unwrap();

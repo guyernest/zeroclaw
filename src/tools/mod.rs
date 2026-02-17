@@ -10,6 +10,7 @@ pub mod hardware_memory_map;
 pub mod hardware_memory_read;
 pub mod http_request;
 pub mod image_info;
+pub mod mcp_client;
 pub mod memory_forget;
 pub mod memory_recall;
 pub mod memory_store;
@@ -181,6 +182,26 @@ pub fn all_tools_with_runtime(
     }
 
     tools
+}
+
+/// Initialize MCP server connections and return their tools.
+pub async fn init_mcp_tools(configs: &[crate::config::McpServerConfig]) -> Vec<Box<dyn Tool>> {
+    let mut all_tools = Vec::new();
+    for cfg in configs.iter().filter(|c| c.enabled) {
+        match mcp_client::McpClientAdapter::connect(cfg).await {
+            Ok(adapter) => {
+                let tools = adapter.into_tools();
+                tracing::info!("MCP server '{}': {} tool(s) loaded", cfg.name, tools.len());
+                all_tools.extend(tools);
+            }
+            Err(e) => {
+                tracing::error!("MCP server '{}' failed to connect: {e}", cfg.name);
+                crate::health::mark_component_error(&format!("mcp:{}", cfg.name), &e.to_string());
+                // Continue — one failure does NOT block others
+            }
+        }
+    }
+    all_tools
 }
 
 #[cfg(test)]

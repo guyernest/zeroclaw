@@ -130,6 +130,7 @@ pub fn run_wizard() -> Result<Config> {
         peripherals: crate::config::PeripheralsConfig::default(),
         agents: std::collections::HashMap::new(),
         hardware: hardware_config,
+        mcp_servers: Vec::new(),
     };
 
     println!(
@@ -342,6 +343,7 @@ pub fn run_quick_setup(
         peripherals: crate::config::PeripheralsConfig::default(),
         agents: std::collections::HashMap::new(),
         hardware: crate::config::HardwareConfig::default(),
+        mcp_servers: Vec::new(),
     };
 
     config.save()?;

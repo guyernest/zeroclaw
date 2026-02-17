@@ -809,7 +809,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
     };
     // Build system prompt from workspace identity files + skills
     let workspace = config.workspace_dir.clone();
-    let tools_registry = Arc::new(tools::all_tools_with_runtime(
+    let mut tools_vec = tools::all_tools_with_runtime(
         &security,
         runtime,
         Arc::clone(&mem),
@@ -821,7 +821,23 @@ pub async fn start_channels(config: Config) -> Result<()> {
         &config.agents,
         config.api_key.as_deref(),
         &config,
-    ));
+    );
+
+    // Initialize MCP server tools (async)
+    let mcp_tools = tools::init_mcp_tools(&config.mcp_servers).await;
+    if !mcp_tools.is_empty() {
+        println!(
+            "  MCP tools: {}",
+            mcp_tools
+                .iter()
+                .map(|t| t.name())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        tools_vec.extend(mcp_tools);
+    }
+
+    let tools_registry = Arc::new(tools_vec);
 
     let skills = crate::skills::load_skills(&workspace);
 
