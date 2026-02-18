@@ -317,19 +317,20 @@ pub fn run_quick_setup(
 
         let mut config = Config::load_or_init()?;
 
-        // Only override fields that were explicitly passed
-        if let Some(key) = api_key {
+        // Only override fields that were explicitly passed (skip empty strings
+        // which occur when MSI properties are blank).
+        if let Some(key) = api_key.filter(|s| !s.is_empty()) {
             config.api_key = Some(key.to_string());
         }
-        if let Some(p) = provider {
+        if let Some(p) = provider.filter(|s| !s.is_empty()) {
             let p = p.to_string();
             config.default_model = Some(default_model_for_provider(&p));
             config.default_provider = Some(p);
         }
-        if let Some(mb) = memory_backend {
+        if let Some(mb) = memory_backend.filter(|s| !s.is_empty()) {
             config.memory = memory_config_defaults_for_backend(mb);
         }
-        if let Some(arn) = activity_arn {
+        if let Some(arn) = activity_arn.filter(|s| !s.is_empty()) {
             config.channels_config.activity = Some(ActivityChannelConfig {
                 activity_arn: arn.to_string(),
                 worker_name: "zeroclaw".into(),
@@ -355,9 +356,10 @@ pub fn run_quick_setup(
         );
         println!();
 
-        let provider_name = provider.unwrap_or("openrouter").to_string();
+        let provider_name = provider.filter(|s| !s.is_empty()).unwrap_or("openrouter").to_string();
         let model = default_model_for_provider(&provider_name);
         let memory_backend_name = memory_backend
+            .filter(|s| !s.is_empty())
             .unwrap_or(default_memory_backend_key())
             .to_string();
 
@@ -366,7 +368,7 @@ pub fn run_quick_setup(
 
         // Build channels config with optional Activity channel
         let mut channels_config = ChannelsConfig::default();
-        if let Some(arn) = activity_arn {
+        if let Some(arn) = activity_arn.filter(|s| !s.is_empty()) {
             channels_config.activity = Some(ActivityChannelConfig {
                 activity_arn: arn.to_string(),
                 worker_name: "zeroclaw".into(),
@@ -380,7 +382,7 @@ pub fn run_quick_setup(
         let config = Config {
             workspace_dir: workspace_dir.clone(),
             config_path: config_path.clone(),
-            api_key: api_key.map(String::from),
+            api_key: api_key.filter(|s| !s.is_empty()).map(String::from),
             default_provider: Some(provider_name),
             default_model: Some(model),
             default_temperature: 0.7,
