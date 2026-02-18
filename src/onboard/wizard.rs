@@ -1,8 +1,8 @@
-use crate::config::schema::{DingTalkConfig, IrcConfig, WhatsAppConfig};
+use crate::config::schema::{ActivityChannelConfig, DingTalkConfig, IrcConfig, WhatsAppConfig};
 use crate::config::{
     AutonomyConfig, BrowserConfig, ChannelsConfig, ComposioConfig, Config, DiscordConfig,
-    HeartbeatConfig, IMessageConfig, MatrixConfig, MemoryConfig, ObservabilityConfig,
-    RuntimeConfig, SecretsConfig, SlackConfig, TelegramConfig, WebhookConfig,
+    HeartbeatConfig, IMessageConfig, MatrixConfig, McpServerConfig, McpTransportType, MemoryConfig,
+    ObservabilityConfig, RuntimeConfig, SecretsConfig, SlackConfig, TelegramConfig, WebhookConfig,
 };
 use crate::hardware::{self, HardwareConfig};
 use crate::memory::{
@@ -69,31 +69,34 @@ pub fn run_wizard() -> Result<Config> {
     );
     println!();
 
-    print_step(1, 9, "Workspace Setup");
+    print_step(1, 10, "Workspace Setup");
     let (workspace_dir, config_path) = setup_workspace()?;
 
-    print_step(2, 9, "AI Provider & API Key");
+    print_step(2, 10, "AI Provider & API Key");
     let (provider, api_key, model) = setup_provider(&workspace_dir)?;
 
-    print_step(3, 9, "Channels (How You Talk to ZeroClaw)");
+    print_step(3, 10, "Channels (How You Talk to ZeroClaw)");
     let channels_config = setup_channels()?;
 
-    print_step(4, 9, "Tunnel (Expose to Internet)");
+    print_step(4, 10, "Tunnel (Expose to Internet)");
     let tunnel_config = setup_tunnel()?;
 
-    print_step(5, 9, "Tool Mode & Security");
+    print_step(5, 10, "Tool Mode & Security");
     let (composio_config, secrets_config) = setup_tool_mode()?;
 
-    print_step(6, 9, "Hardware (Physical World)");
+    print_step(6, 10, "Hardware (Physical World)");
     let hardware_config = setup_hardware()?;
 
-    print_step(7, 9, "Memory Configuration");
+    print_step(7, 10, "Memory Configuration");
     let memory_config = setup_memory()?;
 
-    print_step(8, 9, "Project Context (Personalize Your Agent)");
+    print_step(8, 10, "Project Context (Personalize Your Agent)");
     let project_ctx = setup_project_context()?;
 
-    print_step(9, 9, "Workspace Files");
+    print_step(9, 10, "MCP Servers (External Tools)");
+    let mcp_servers = setup_mcp_servers()?;
+
+    print_step(10, 10, "Workspace Files");
     scaffold_workspace(&workspace_dir, &project_ctx)?;
 
     // ── Build config ──
@@ -130,7 +133,7 @@ pub fn run_wizard() -> Result<Config> {
         peripherals: crate::config::PeripheralsConfig::default(),
         agents: std::collections::HashMap::new(),
         hardware: hardware_config,
-        mcp_servers: Vec::new(),
+        mcp_servers,
     };
 
     println!(
@@ -157,7 +160,8 @@ pub fn run_wizard() -> Result<Config> {
         || config.channels_config.imessage.is_some()
         || config.channels_config.matrix.is_some()
         || config.channels_config.email.is_some()
-        || config.channels_config.dingtalk.is_some();
+        || config.channels_config.dingtalk.is_some()
+        || config.channels_config.activity.is_some();
 
     if has_channels && config.api_key.is_some() {
         let launch: bool = Confirm::new()
@@ -214,7 +218,8 @@ pub fn run_channels_repair_wizard() -> Result<Config> {
         || config.channels_config.imessage.is_some()
         || config.channels_config.matrix.is_some()
         || config.channels_config.email.is_some()
-        || config.channels_config.dingtalk.is_some();
+        || config.channels_config.dingtalk.is_some()
+        || config.channels_config.activity.is_some();
 
     if has_channels && config.api_key.is_some() {
         let launch: bool = Confirm::new()
@@ -287,6 +292,7 @@ pub fn run_quick_setup(
     api_key: Option<&str>,
     provider: Option<&str>,
     memory_backend: Option<&str>,
+    activity_arn: Option<&str>,
 ) -> Result<Config> {
     println!("{}", style(BANNER).cyan().bold());
     println!(
@@ -315,6 +321,19 @@ pub fn run_quick_setup(
     // Create memory config based on backend choice
     let memory_config = memory_config_defaults_for_backend(&memory_backend_name);
 
+    // Build channels config with optional Activity channel
+    let mut channels_config = ChannelsConfig::default();
+    if let Some(arn) = activity_arn {
+        channels_config.activity = Some(ActivityChannelConfig {
+            activity_arn: arn.to_string(),
+            worker_name: "zeroclaw".into(),
+            aws_profile: None,
+            aws_region: None,
+            heartbeat_interval_secs: 30,
+            poll_interval_ms: 1000,
+        });
+    }
+
     let config = Config {
         workspace_dir: workspace_dir.clone(),
         config_path: config_path.clone(),
@@ -330,7 +349,7 @@ pub fn run_quick_setup(
         agent: crate::config::schema::AgentConfig::default(),
         model_routes: Vec::new(),
         heartbeat: HeartbeatConfig::default(),
-        channels_config: ChannelsConfig::default(),
+        channels_config,
         memory: memory_config,
         tunnel: crate::config::TunnelConfig::default(),
         gateway: crate::config::GatewayConfig::default(),
@@ -343,7 +362,7 @@ pub fn run_quick_setup(
         peripherals: crate::config::PeripheralsConfig::default(),
         agents: std::collections::HashMap::new(),
         hardware: crate::config::HardwareConfig::default(),
-        mcp_servers: Vec::new(),
+        mcp_servers: bundled_mcp_servers(),
     };
 
     config.save()?;
@@ -417,6 +436,24 @@ pub fn run_quick_setup(
         "  {} Composio:   {}",
         style("✓").green().bold(),
         style("disabled (sovereign mode)").dim()
+    );
+    println!(
+        "  {} Activity:   {}",
+        style("✓").green().bold(),
+        if activity_arn.is_some() {
+            style("configured (AWS Step Functions)").green()
+        } else {
+            style("not configured").dim()
+        }
+    );
+    println!(
+        "  {} MCP:        {}",
+        style("✓").green().bold(),
+        style(format!(
+            "{} bundled server(s)",
+            config.mcp_servers.len()
+        ))
+        .green()
     );
     println!();
     println!(
@@ -1214,6 +1251,46 @@ pub fn run_models_refresh(
 }
 
 // ── Step helpers ─────────────────────────────────────────────────
+
+// ── Bundled MCP servers ──────────────────────────────────────────
+
+/// Returns pre-configured MCP servers bundled with the LocalAgent installer.
+fn bundled_mcp_servers() -> Vec<McpServerConfig> {
+    vec![
+        McpServerConfig {
+            name: "config-server".into(),
+            transport: McpTransportType::Http,
+            command: None,
+            args: Vec::new(),
+            env: std::collections::HashMap::new(),
+            url: Some("http://localhost:3100/mcp".into()),
+            headers: std::collections::HashMap::new(),
+            enabled: true,
+            allowed_tools: Vec::new(),
+            blocked_tools: Vec::new(),
+            restart_on_crash: true,
+            max_restarts: 5,
+            init_timeout_secs: 10,
+            tool_call_timeout_secs: 30,
+        },
+        McpServerConfig {
+            name: "browser-server".into(),
+            transport: McpTransportType::Http,
+            command: None,
+            args: Vec::new(),
+            env: std::collections::HashMap::new(),
+            url: Some("http://localhost:3200/mcp".into()),
+            headers: std::collections::HashMap::new(),
+            enabled: true,
+            allowed_tools: Vec::new(),
+            blocked_tools: Vec::new(),
+            restart_on_crash: true,
+            max_restarts: 5,
+            init_timeout_secs: 10,
+            tool_call_timeout_secs: 30,
+        },
+    ]
+}
 
 fn print_step(current: u8, total: u8, title: &str) {
     println!();
@@ -2318,13 +2395,21 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     "— 钉钉 Stream Mode"
                 }
             ),
+            format!(
+                "Activity   {}",
+                if config.activity.is_some() {
+                    "✅ configured"
+                } else {
+                    "— AWS Step Functions"
+                }
+            ),
             "Done — finish setup".to_string(),
         ];
 
         let choice = Select::new()
             .with_prompt("  Connect a channel (or Done to continue)")
             .items(&options)
-            .default(9)
+            .default(10)
             .interact()?;
 
         match choice {
@@ -3113,6 +3198,65 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     allowed_users,
                 });
             }
+            9 => {
+                // ── Activity (AWS Step Functions) ──
+                println!();
+                println!(
+                    "  {} {}",
+                    style("Activity Setup").white().bold(),
+                    style("— AWS Step Functions Activity channel").dim()
+                );
+                print_bullet("ZeroClaw polls a Step Functions Activity for tasks.");
+                print_bullet("You need an Activity ARN from your AWS account.");
+                println!();
+
+                let activity_arn: String = Input::new()
+                    .with_prompt("  Activity ARN (arn:aws:states:...)")
+                    .interact_text()?;
+
+                if activity_arn.trim().is_empty() {
+                    println!("  {} Skipped", style("→").dim());
+                    continue;
+                }
+
+                let worker_name: String = Input::new()
+                    .with_prompt("  Worker name")
+                    .default("zeroclaw".into())
+                    .interact_text()?;
+
+                let aws_profile: String = Input::new()
+                    .with_prompt("  AWS profile (Enter for default)")
+                    .allow_empty(true)
+                    .interact_text()?;
+
+                let aws_region: String = Input::new()
+                    .with_prompt("  AWS region (Enter for default)")
+                    .allow_empty(true)
+                    .interact_text()?;
+
+                config.activity = Some(ActivityChannelConfig {
+                    activity_arn: activity_arn.trim().to_string(),
+                    worker_name: worker_name.trim().to_string(),
+                    aws_profile: if aws_profile.trim().is_empty() {
+                        None
+                    } else {
+                        Some(aws_profile.trim().to_string())
+                    },
+                    aws_region: if aws_region.trim().is_empty() {
+                        None
+                    } else {
+                        Some(aws_region.trim().to_string())
+                    },
+                    heartbeat_interval_secs: 30,
+                    poll_interval_ms: 1000,
+                });
+
+                println!(
+                    "  {} Activity configured (worker: {})",
+                    style("✅").green().bold(),
+                    style(&worker_name).cyan()
+                );
+            }
             _ => break, // Done
         }
         println!();
@@ -3150,6 +3294,9 @@ fn setup_channels() -> Result<ChannelsConfig> {
     if config.dingtalk.is_some() {
         active.push("DingTalk");
     }
+    if config.activity.is_some() {
+        active.push("Activity");
+    }
 
     println!(
         "  {} Channels: {}",
@@ -3158,6 +3305,164 @@ fn setup_channels() -> Result<ChannelsConfig> {
     );
 
     Ok(config)
+}
+
+// ── Step 9: MCP Servers ─────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn setup_mcp_servers() -> Result<Vec<McpServerConfig>> {
+    print_bullet("MCP servers provide external tools for ZeroClaw.");
+    print_bullet("Bundled servers (config-server, browser-server) are pre-configured.");
+    println!();
+
+    let mut servers = Vec::new();
+
+    // Offer bundled servers
+    let bundled = bundled_mcp_servers();
+    let keep_bundled = Confirm::new()
+        .with_prompt(format!(
+            "  {} Include bundled MCP servers (config-server:3100, browser-server:3200)?",
+            style("📦").cyan()
+        ))
+        .default(true)
+        .interact()?;
+
+    if keep_bundled {
+        servers.extend(bundled);
+        println!(
+            "  {} Added {} bundled server(s)",
+            style("✅").green().bold(),
+            servers.len()
+        );
+    }
+
+    // Custom server loop
+    loop {
+        let options = vec![
+            "Add custom HTTP MCP server".to_string(),
+            "Add custom Stdio MCP server".to_string(),
+            "Done — finish MCP setup".to_string(),
+        ];
+
+        let choice = Select::new()
+            .with_prompt("  Add a custom MCP server (or Done)")
+            .items(&options)
+            .default(2)
+            .interact()?;
+
+        match choice {
+            0 => {
+                // HTTP server
+                let name: String = Input::new()
+                    .with_prompt("  Server name")
+                    .interact_text()?;
+
+                if name.trim().is_empty() {
+                    println!("  {} Skipped", style("→").dim());
+                    continue;
+                }
+
+                let url: String = Input::new()
+                    .with_prompt("  URL (e.g. http://localhost:8080/mcp)")
+                    .interact_text()?;
+
+                if url.trim().is_empty() {
+                    println!("  {} Skipped — URL required", style("→").dim());
+                    continue;
+                }
+
+                servers.push(McpServerConfig {
+                    name: name.trim().to_string(),
+                    transport: McpTransportType::Http,
+                    command: None,
+                    args: Vec::new(),
+                    env: std::collections::HashMap::new(),
+                    url: Some(url.trim().to_string()),
+                    headers: std::collections::HashMap::new(),
+                    enabled: true,
+                    allowed_tools: Vec::new(),
+                    blocked_tools: Vec::new(),
+                    restart_on_crash: true,
+                    max_restarts: 5,
+                    init_timeout_secs: 10,
+                    tool_call_timeout_secs: 30,
+                });
+
+                println!(
+                    "  {} Added HTTP server: {}",
+                    style("✅").green().bold(),
+                    style(&name).cyan()
+                );
+            }
+            1 => {
+                // Stdio server
+                let name: String = Input::new()
+                    .with_prompt("  Server name")
+                    .interact_text()?;
+
+                if name.trim().is_empty() {
+                    println!("  {} Skipped", style("→").dim());
+                    continue;
+                }
+
+                let command: String = Input::new()
+                    .with_prompt("  Command to spawn (e.g. npx, python)")
+                    .interact_text()?;
+
+                if command.trim().is_empty() {
+                    println!("  {} Skipped — command required", style("→").dim());
+                    continue;
+                }
+
+                let args_str: String = Input::new()
+                    .with_prompt("  Arguments (space-separated, Enter for none)")
+                    .allow_empty(true)
+                    .interact_text()?;
+
+                let args: Vec<String> = if args_str.trim().is_empty() {
+                    Vec::new()
+                } else {
+                    args_str
+                        .split_whitespace()
+                        .map(String::from)
+                        .collect()
+                };
+
+                servers.push(McpServerConfig {
+                    name: name.trim().to_string(),
+                    transport: McpTransportType::Stdio,
+                    command: Some(command.trim().to_string()),
+                    args,
+                    env: std::collections::HashMap::new(),
+                    url: None,
+                    headers: std::collections::HashMap::new(),
+                    enabled: true,
+                    allowed_tools: Vec::new(),
+                    blocked_tools: Vec::new(),
+                    restart_on_crash: true,
+                    max_restarts: 5,
+                    init_timeout_secs: 10,
+                    tool_call_timeout_secs: 30,
+                });
+
+                println!(
+                    "  {} Added Stdio server: {}",
+                    style("✅").green().bold(),
+                    style(&name).cyan()
+                );
+            }
+            _ => break,
+        }
+        println!();
+    }
+
+    println!(
+        "  {} MCP Servers: {} configured",
+        style("✓").green().bold(),
+        style(servers.len()).green()
+    );
+
+    Ok(servers)
 }
 
 // ── Step 4: Tunnel ──────────────────────────────────────────────
@@ -3601,7 +3906,8 @@ fn print_summary(config: &Config) {
         || config.channels_config.imessage.is_some()
         || config.channels_config.matrix.is_some()
         || config.channels_config.email.is_some()
-        || config.channels_config.dingtalk.is_some();
+        || config.channels_config.dingtalk.is_some()
+        || config.channels_config.activity.is_some();
 
     println!();
     println!(
@@ -3669,11 +3975,32 @@ fn print_summary(config: &Config) {
     if config.channels_config.webhook.is_some() {
         channels.push("Webhook");
     }
+    if config.channels_config.dingtalk.is_some() {
+        channels.push("DingTalk");
+    }
+    if config.channels_config.activity.is_some() {
+        channels.push("Activity");
+    }
     println!(
         "    {} Channels:      {}",
         style("📡").cyan(),
         channels.join(", ")
     );
+
+    // MCP Servers
+    if config.mcp_servers.is_empty() {
+        println!(
+            "    {} MCP Servers:   none",
+            style("🔧").cyan()
+        );
+    } else {
+        let names: Vec<&str> = config.mcp_servers.iter().map(|s| s.name.as_str()).collect();
+        println!(
+            "    {} MCP Servers:   {}",
+            style("🔧").cyan(),
+            names.join(", ")
+        );
+    }
 
     println!(
         "    {} API Key:       {}",

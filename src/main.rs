@@ -120,6 +120,10 @@ enum Commands {
         /// Memory backend (sqlite, lucid, markdown, none) - used in quick mode, default: sqlite
         #[arg(long)]
         memory: Option<String>,
+
+        /// AWS Step Functions Activity ARN (used in quick mode)
+        #[arg(long)]
+        activity_arn: Option<String>,
     },
 
     /// Start the AI agent loop
@@ -364,6 +368,7 @@ async fn main() -> Result<()> {
         api_key,
         provider,
         memory,
+        activity_arn,
     } = &cli.command
     {
         if *interactive && *channels_only {
@@ -378,7 +383,12 @@ async fn main() -> Result<()> {
         } else if *interactive {
             onboard::run_wizard()?
         } else {
-            onboard::run_quick_setup(api_key.as_deref(), provider.as_deref(), memory.as_deref())?
+            onboard::run_quick_setup(
+                api_key.as_deref(),
+                provider.as_deref(),
+                memory.as_deref(),
+                activity_arn.as_deref(),
+            )?
         };
         // Auto-start channels if user said yes during wizard
         if std::env::var("ZEROCLAW_AUTOSTART_CHANNELS").as_deref() == Ok("1") {
