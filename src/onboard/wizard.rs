@@ -295,13 +295,6 @@ pub fn run_quick_setup(
     activity_arn: Option<&str>,
 ) -> Result<Config> {
     println!("{}", style(BANNER).cyan().bold());
-    println!(
-        "  {}",
-        style("Quick Setup — generating config with sensible defaults...")
-            .white()
-            .bold()
-    );
-    println!();
 
     let home = directories::UserDirs::new()
         .map(|u| u.home_dir().to_path_buf())
@@ -312,60 +305,112 @@ pub fn run_quick_setup(
 
     fs::create_dir_all(&workspace_dir).context("Failed to create workspace directory")?;
 
-    let provider_name = provider.unwrap_or("openrouter").to_string();
-    let model = default_model_for_provider(&provider_name);
-    let memory_backend_name = memory_backend
-        .unwrap_or(default_memory_backend_key())
-        .to_string();
+    // If config already exists, load it and apply only explicit CLI overrides
+    let config = if config_path.exists() {
+        println!(
+            "  {}",
+            style("Quick Setup — existing config found, applying CLI overrides...")
+                .white()
+                .bold()
+        );
+        println!();
 
-    // Create memory config based on backend choice
-    let memory_config = memory_config_defaults_for_backend(&memory_backend_name);
+        let mut config = Config::load_or_init()?;
 
-    // Build channels config with optional Activity channel
-    let mut channels_config = ChannelsConfig::default();
-    if let Some(arn) = activity_arn {
-        channels_config.activity = Some(ActivityChannelConfig {
-            activity_arn: arn.to_string(),
-            worker_name: "zeroclaw".into(),
-            aws_profile: None,
-            aws_region: None,
-            heartbeat_interval_secs: 30,
-            poll_interval_ms: 1000,
-        });
-    }
+        // Only override fields that were explicitly passed
+        if let Some(key) = api_key {
+            config.api_key = Some(key.to_string());
+        }
+        if let Some(p) = provider {
+            let p = p.to_string();
+            config.default_model = Some(default_model_for_provider(&p));
+            config.default_provider = Some(p);
+        }
+        if let Some(mb) = memory_backend {
+            config.memory = memory_config_defaults_for_backend(mb);
+        }
+        if let Some(arn) = activity_arn {
+            config.channels_config.activity = Some(ActivityChannelConfig {
+                activity_arn: arn.to_string(),
+                worker_name: "zeroclaw".into(),
+                aws_profile: None,
+                aws_region: None,
+                heartbeat_interval_secs: 30,
+                poll_interval_ms: 1000,
+            });
+        }
+        // Ensure bundled MCP servers are present
+        if config.mcp_servers.is_empty() {
+            config.mcp_servers = bundled_mcp_servers();
+        }
 
-    let config = Config {
-        workspace_dir: workspace_dir.clone(),
-        config_path: config_path.clone(),
-        api_key: api_key.map(String::from),
-        default_provider: Some(provider_name.clone()),
-        default_model: Some(model.clone()),
-        default_temperature: 0.7,
-        observability: ObservabilityConfig::default(),
-        autonomy: AutonomyConfig::default(),
-        runtime: RuntimeConfig::default(),
-        reliability: crate::config::ReliabilityConfig::default(),
-        scheduler: crate::config::schema::SchedulerConfig::default(),
-        agent: crate::config::schema::AgentConfig::default(),
-        model_routes: Vec::new(),
-        heartbeat: HeartbeatConfig::default(),
-        channels_config,
-        memory: memory_config,
-        tunnel: crate::config::TunnelConfig::default(),
-        gateway: crate::config::GatewayConfig::default(),
-        composio: ComposioConfig::default(),
-        secrets: SecretsConfig::default(),
-        browser: BrowserConfig::default(),
-        http_request: crate::config::HttpRequestConfig::default(),
-        identity: crate::config::IdentityConfig::default(),
-        cost: crate::config::CostConfig::default(),
-        peripherals: crate::config::PeripheralsConfig::default(),
-        agents: std::collections::HashMap::new(),
-        hardware: crate::config::HardwareConfig::default(),
-        mcp_servers: bundled_mcp_servers(),
+        config.save()?;
+        config
+    } else {
+        println!(
+            "  {}",
+            style("Quick Setup — generating config with sensible defaults...")
+                .white()
+                .bold()
+        );
+        println!();
+
+        let provider_name = provider.unwrap_or("openrouter").to_string();
+        let model = default_model_for_provider(&provider_name);
+        let memory_backend_name = memory_backend
+            .unwrap_or(default_memory_backend_key())
+            .to_string();
+
+        // Create memory config based on backend choice
+        let memory_config = memory_config_defaults_for_backend(&memory_backend_name);
+
+        // Build channels config with optional Activity channel
+        let mut channels_config = ChannelsConfig::default();
+        if let Some(arn) = activity_arn {
+            channels_config.activity = Some(ActivityChannelConfig {
+                activity_arn: arn.to_string(),
+                worker_name: "zeroclaw".into(),
+                aws_profile: None,
+                aws_region: None,
+                heartbeat_interval_secs: 30,
+                poll_interval_ms: 1000,
+            });
+        }
+
+        let config = Config {
+            workspace_dir: workspace_dir.clone(),
+            config_path: config_path.clone(),
+            api_key: api_key.map(String::from),
+            default_provider: Some(provider_name),
+            default_model: Some(model),
+            default_temperature: 0.7,
+            observability: ObservabilityConfig::default(),
+            autonomy: AutonomyConfig::default(),
+            runtime: RuntimeConfig::default(),
+            reliability: crate::config::ReliabilityConfig::default(),
+            scheduler: crate::config::schema::SchedulerConfig::default(),
+            agent: crate::config::schema::AgentConfig::default(),
+            model_routes: Vec::new(),
+            heartbeat: HeartbeatConfig::default(),
+            channels_config,
+            memory: memory_config,
+            tunnel: crate::config::TunnelConfig::default(),
+            gateway: crate::config::GatewayConfig::default(),
+            composio: ComposioConfig::default(),
+            secrets: SecretsConfig::default(),
+            browser: BrowserConfig::default(),
+            http_request: crate::config::HttpRequestConfig::default(),
+            identity: crate::config::IdentityConfig::default(),
+            cost: crate::config::CostConfig::default(),
+            peripherals: crate::config::PeripheralsConfig::default(),
+            agents: std::collections::HashMap::new(),
+            hardware: crate::config::HardwareConfig::default(),
+            mcp_servers: bundled_mcp_servers(),
+        };
+
+        config.save()?;
+        config
     };
-
-    config.save()?;
 
     // Scaffold minimal workspace files
     let default_ctx = ProjectContext {
@@ -378,6 +423,10 @@ pub fn run_quick_setup(
     };
     scaffold_workspace(&workspace_dir, &default_ctx)?;
 
+    let provider_name = config.default_provider.as_deref().unwrap_or("openrouter");
+    let model = config.default_model.as_deref().unwrap_or("(default)");
+    let memory_backend_name = &config.memory.backend;
+
     println!(
         "  {} Workspace:  {}",
         style("✓").green().bold(),
@@ -386,17 +435,17 @@ pub fn run_quick_setup(
     println!(
         "  {} Provider:   {}",
         style("✓").green().bold(),
-        style(&provider_name).green()
+        style(provider_name).green()
     );
     println!(
         "  {} Model:      {}",
         style("✓").green().bold(),
-        style(&model).green()
+        style(model).green()
     );
     println!(
         "  {} API Key:    {}",
         style("✓").green().bold(),
-        if api_key.is_some() {
+        if config.api_key.is_some() {
             style("set").green()
         } else {
             style("not set (use --api-key or edit config.toml)").yellow()
@@ -410,7 +459,7 @@ pub fn run_quick_setup(
     println!(
         "  {} Memory:     {} (auto-save: {})",
         style("✓").green().bold(),
-        style(&memory_backend_name).green(),
+        style(memory_backend_name).green(),
         if memory_backend_name == "none" {
             "off"
         } else {
@@ -440,7 +489,7 @@ pub fn run_quick_setup(
     println!(
         "  {} Activity:   {}",
         style("✓").green().bold(),
-        if activity_arn.is_some() {
+        if config.channels_config.activity.is_some() {
             style("configured (AWS Step Functions)").green()
         } else {
             style("not configured").dim()
@@ -450,7 +499,7 @@ pub fn run_quick_setup(
         "  {} MCP:        {}",
         style("✓").green().bold(),
         style(format!(
-            "{} bundled server(s)",
+            "{} server(s)",
             config.mcp_servers.len()
         ))
         .green()
