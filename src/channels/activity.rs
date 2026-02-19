@@ -129,7 +129,7 @@ impl Channel for ActivityChannel {
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("GetActivityTask error: {e:#}");
+                    tracing::warn!("GetActivityTask error: {e:?}");
                     tokio::time::sleep(self.poll_interval).await;
                 }
             }
