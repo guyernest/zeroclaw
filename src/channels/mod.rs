@@ -27,12 +27,13 @@ pub use traits::Channel;
 pub use whatsapp::WhatsAppChannel;
 
 use crate::agent::loop_::{build_tool_instructions, run_tool_call_loop};
-use crate::config::Config;
+use crate::config::{Config, ScriptEngineConfig};
 use crate::identity;
 use crate::memory::{self, Memory};
 use crate::observability::{self, Observer};
 use crate::providers::{self, ChatMessage, Provider};
 use crate::runtime;
+use crate::script_engine::ScriptEngine;
 use crate::security::SecurityPolicy;
 use crate::tools::{self, Tool};
 use crate::util::truncate_with_ellipsis;
@@ -65,6 +66,7 @@ struct ChannelRuntimeContext {
     model: Arc<String>,
     temperature: f64,
     auto_save_memory: bool,
+    script_engine_config: Arc<ScriptEngineConfig>,
 }
 
 fn conversation_memory_key(msg: &traits::ChannelMessage) -> String {
@@ -171,6 +173,55 @@ async fn process_channel_message(ctx: Arc<ChannelRuntimeContext>, msg: traits::C
     };
 
     let target_channel = ctx.channels_by_name.get(&msg.channel).cloned();
+
+    // ── Script detection ──────────────────────────────────────
+    if ctx.script_engine_config.enabled {
+        if let Some(script) = ScriptEngine::detect(&msg.content) {
+            println!(
+                "  📜 Script detected: {} ({} steps)",
+                script.name,
+                script.steps.len()
+            );
+
+            if let Some(channel) = target_channel.as_ref() {
+                let _ = channel.start_typing(&msg.sender).await;
+            }
+
+            let result = ScriptEngine::execute(
+                &script,
+                ctx.tools_registry.as_ref(),
+                Some(ctx.provider.as_ref()),
+                ctx.model.as_str(),
+                ctx.observer.as_ref(),
+                &ctx.script_engine_config,
+            )
+            .await;
+
+            if let Some(channel) = target_channel.as_ref() {
+                let _ = channel.stop_typing(&msg.sender).await;
+            }
+
+            let response = serde_json::to_string(&result).unwrap_or_else(|e| {
+                format!(r#"{{"success":false,"error":"Failed to serialize result: {e}"}}"#)
+            });
+
+            println!(
+                "  📜 Script '{}' completed in {}ms (success: {})",
+                script.name, result.execution_details.duration_ms, result.success
+            );
+
+            if let Some(channel) = target_channel.as_ref() {
+                if let Err(e) = channel.send(&response, &msg.sender).await {
+                    eprintln!(
+                        "  Failed to send script result on {}: {e}",
+                        channel.name()
+                    );
+                }
+            }
+            return;
+        }
+    }
+    // ── End script detection ──────────────────────────────────
 
     if let Some(channel) = target_channel.as_ref() {
         if let Err(e) = channel.start_typing(&msg.sender).await {
@@ -1084,6 +1135,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
         model: Arc::new(model.clone()),
         temperature,
         auto_save_memory: config.memory.auto_save,
+        script_engine_config: Arc::new(config.script_engine.clone()),
     });
 
     run_message_dispatch_loop(rx, runtime_ctx, max_in_flight_messages).await;
@@ -1270,6 +1322,7 @@ mod tests {
             model: Arc::new("test-model".to_string()),
             temperature: 0.0,
             auto_save_memory: false,
+            script_engine_config: Arc::new(ScriptEngineConfig::default()),
         });
 
         process_channel_message(
@@ -1360,6 +1413,7 @@ mod tests {
             model: Arc::new("test-model".to_string()),
             temperature: 0.0,
             auto_save_memory: false,
+            script_engine_config: Arc::new(ScriptEngineConfig::default()),
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(4);

@@ -59,6 +59,7 @@ pub mod peripherals;
 pub mod providers;
 pub mod rag;
 pub mod runtime;
+pub mod script_engine;
 pub mod security;
 pub mod service;
 pub mod skills;

@@ -91,6 +91,56 @@ pub struct Config {
     /// MCP server configurations for external tool integration.
     #[serde(default)]
     pub mcp_servers: Vec<McpServerConfig>,
+
+    /// Script engine configuration for cloud-authored workflow execution.
+    #[serde(default)]
+    pub script_engine: ScriptEngineConfig,
+}
+
+// ── Script Engine ────────────────────────────────────────────────
+
+/// Configuration for the ScriptEngine (cloud-authored workflow execution).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScriptEngineConfig {
+    /// Enable script detection and execution (default: true)
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Allow LLM-assisted recovery on step failure (default: true)
+    #[serde(default = "default_true")]
+    pub llm_fallback: bool,
+    /// Maximum retries per step (for `on_failure: retry`) (default: 2)
+    #[serde(default = "default_max_step_retries")]
+    pub max_step_retries: u32,
+    /// Default per-step timeout in seconds (default: 60)
+    #[serde(default = "default_script_step_timeout")]
+    pub step_timeout_secs: u64,
+    /// Total script execution timeout in seconds (default: 300)
+    #[serde(default = "default_script_timeout")]
+    pub script_timeout_secs: u64,
+}
+
+fn default_max_step_retries() -> u32 {
+    2
+}
+
+fn default_script_step_timeout() -> u64 {
+    60
+}
+
+fn default_script_timeout() -> u64 {
+    300
+}
+
+impl Default for ScriptEngineConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            llm_fallback: true,
+            max_step_retries: default_max_step_retries(),
+            step_timeout_secs: default_script_step_timeout(),
+            script_timeout_secs: default_script_timeout(),
+        }
+    }
 }
 
 // ── Delegate Agents ──────────────────────────────────────────────
@@ -1711,6 +1761,7 @@ impl Default for Config {
             agents: HashMap::new(),
             hardware: HardwareConfig::default(),
             mcp_servers: Vec::new(),
+            script_engine: ScriptEngineConfig::default(),
         }
     }
 }
@@ -2069,6 +2120,7 @@ mod tests {
             agents: HashMap::new(),
             hardware: HardwareConfig::default(),
             mcp_servers: Vec::new(),
+            script_engine: ScriptEngineConfig::default(),
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -2177,6 +2229,7 @@ tool_dispatcher = "xml"
             agents: HashMap::new(),
             hardware: HardwareConfig::default(),
             mcp_servers: Vec::new(),
+            script_engine: ScriptEngineConfig::default(),
         };
 
         config.save().unwrap();

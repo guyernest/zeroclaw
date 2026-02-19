@@ -59,6 +59,7 @@ mod onboard;
 mod peripherals;
 mod providers;
 mod runtime;
+mod script_engine;
 mod security;
 mod service;
 mod skillforge;

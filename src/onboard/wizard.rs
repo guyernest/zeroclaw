@@ -134,6 +134,7 @@ pub fn run_wizard() -> Result<Config> {
         agents: std::collections::HashMap::new(),
         hardware: hardware_config,
         mcp_servers,
+        script_engine: crate::config::ScriptEngineConfig::default(),
     };
 
     println!(
@@ -414,6 +415,7 @@ pub fn run_quick_setup(
             agents: std::collections::HashMap::new(),
             hardware: crate::config::HardwareConfig::default(),
             mcp_servers: bundled_mcp_servers(),
+            script_engine: crate::config::ScriptEngineConfig::default(),
         };
 
         config.save()?;
