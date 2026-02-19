@@ -124,6 +124,10 @@ enum Commands {
         /// AWS Step Functions Activity ARN (used in quick mode)
         #[arg(long)]
         activity_arn: Option<String>,
+
+        /// AWS profile name for Step Functions credentials (e.g. "browser-agent")
+        #[arg(long)]
+        aws_profile: Option<String>,
     },
 
     /// Start the AI agent loop
@@ -369,6 +373,7 @@ async fn main() -> Result<()> {
         provider,
         memory,
         activity_arn,
+        aws_profile,
     } = &cli.command
     {
         if *interactive && *channels_only {
@@ -388,6 +393,7 @@ async fn main() -> Result<()> {
                 provider.as_deref(),
                 memory.as_deref(),
                 activity_arn.as_deref(),
+                aws_profile.as_deref(),
             )?
         };
         // Auto-start channels if user said yes during wizard

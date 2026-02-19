@@ -293,6 +293,7 @@ pub fn run_quick_setup(
     provider: Option<&str>,
     memory_backend: Option<&str>,
     activity_arn: Option<&str>,
+    aws_profile: Option<&str>,
 ) -> Result<Config> {
     println!("{}", style(BANNER).cyan().bold());
 
@@ -334,11 +335,16 @@ pub fn run_quick_setup(
             config.channels_config.activity = Some(ActivityChannelConfig {
                 activity_arn: arn.to_string(),
                 worker_name: "zeroclaw".into(),
-                aws_profile: None,
+                aws_profile: aws_profile.filter(|s| !s.is_empty()).map(String::from),
                 aws_region: None,
                 heartbeat_interval_secs: 30,
                 poll_interval_ms: 1000,
             });
+        } else if let Some(profile) = aws_profile.filter(|s| !s.is_empty()) {
+            // Set AWS profile on existing activity config without replacing it
+            if let Some(ref mut activity) = config.channels_config.activity {
+                activity.aws_profile = Some(profile.to_string());
+            }
         }
         // Ensure bundled MCP servers are present
         if config.mcp_servers.is_empty() {
@@ -372,7 +378,7 @@ pub fn run_quick_setup(
             channels_config.activity = Some(ActivityChannelConfig {
                 activity_arn: arn.to_string(),
                 worker_name: "zeroclaw".into(),
-                aws_profile: None,
+                aws_profile: aws_profile.filter(|s| !s.is_empty()).map(String::from),
                 aws_region: None,
                 heartbeat_interval_secs: 30,
                 poll_interval_ms: 1000,
