@@ -3,10 +3,11 @@ use crate::memory::{self, Memory, MemoryCategory};
 use crate::observability::{self, Observer, ObserverEvent};
 use crate::providers::{self, ChatMessage, Provider, ToolCall};
 use crate::runtime;
+use crate::script_engine::ScriptEngine;
 use crate::security::SecurityPolicy;
 use crate::tools::{self, Tool};
 use crate::util::truncate_with_ellipsis;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::fmt::Write;
 use std::io::Write as _;
 use std::sync::Arc;
@@ -818,6 +819,35 @@ pub async fn run(
     let start = Instant::now();
 
     if let Some(msg) = message {
+        // ── @file loading + script detection ─────────────────────
+        let content = if let Some(path) = msg.strip_prefix('@') {
+            std::fs::read_to_string(path)
+                .with_context(|| format!("Failed to read script file: {path}"))?
+        } else {
+            msg.clone()
+        };
+
+        if config.script_engine.enabled {
+            if let Some(script) = ScriptEngine::detect(&content) {
+                println!(
+                    "📜 Script detected: {} ({} steps)",
+                    script.name,
+                    script.steps.len()
+                );
+                let result = ScriptEngine::execute(
+                    &script,
+                    &tools_registry,
+                    Some(provider.as_ref()),
+                    model_name,
+                    observer.as_ref(),
+                    &config.script_engine,
+                )
+                .await;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+                return Ok(());
+            }
+        }
+
         // Auto-save user message to memory
         if config.memory.auto_save {
             let user_key = autosave_memory_key("user_msg");
