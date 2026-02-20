@@ -1,0 +1,115 @@
+{
+  "version": "1.0",
+  "name": "bt-broadband-check",
+  "variables": {
+    "postcode": "{{variables.postcode}}",
+    "full_address": "{{variables.full_address}}",
+    "bt_url": "https://bbactotl.btwholesale.com"
+  },
+  "steps": [
+    {
+      "id": "navigate",
+      "tool": "browser-server.navigate",
+      "args": {
+        "url": "{{variables.bt_url}}"
+      },
+      "timeout_secs": 30
+    },
+    {
+      "id": "wait-load",
+      "tool": "browser-server.wait",
+      "args": {
+        "time": 3000
+      },
+      "timeout_secs": 10
+    },
+    {
+      "id": "handle-login",
+      "tool_mode": "code",
+      "server": "browser-server",
+      "code": "const passwordField = document.querySelector('input[type=\"password\"]'); if (passwordField && passwordField.offsetParent !== null) { const form = passwordField.closest('form'); if (form) { const submitBtn = form.querySelector('button[type=\"submit\"], input[type=\"submit\"]'); if (submitBtn) { submitBtn.click(); } } } const cookieBtn = document.querySelector('[id*=\"cookie\"] button, [class*=\"cookie\"] button, [id*=\"consent\"] button, [class*=\"consent\"] button, button[aria-label*=\"accept\"], button[aria-label*=\"Accept\"]'); if (cookieBtn) { cookieBtn.click(); } return { handled: true };",
+      "timeout_secs": 15,
+      "on_failure": "skip"
+    },
+    {
+      "id": "navigate-search",
+      "tool": "browser-server.navigate",
+      "args": {
+        "url": "https://bbactotl.btwholesale.com/AddressHome"
+      },
+      "timeout_secs": 30
+    },
+    {
+      "id": "perform-search",
+      "tool_mode": "code",
+      "server": "browser-server",
+      "code": "const postcodeInput = document.querySelector('input[name*=\"postcode\"], input[name*=\"Postcode\"], input[id*=\"postcode\"], input[id*=\"Postcode\"], input[placeholder*=\"postcode\"], input[placeholder*=\"Postcode\"]'); if (!postcodeInput) { throw new Error('Postcode input not found'); } postcodeInput.value = ''; postcodeInput.focus(); postcodeInput.value = '{{variables.postcode}}'; postcodeInput.dispatchEvent(new Event('input', { bubbles: true })); postcodeInput.dispatchEvent(new Event('change', { bubbles: true })); const searchBtn = document.querySelector('button[type=\"submit\"], input[type=\"submit\"], button[id*=\"search\"], button[id*=\"Search\"]'); if (searchBtn) { searchBtn.click(); } return { searched: true };",
+      "timeout_secs": 15
+    },
+    {
+      "id": "wait-addresses",
+      "tool": "browser-server.wait",
+      "args": {
+        "time": 15000
+      },
+      "timeout_secs": 20
+    },
+    {
+      "id": "get-address-dom",
+      "tool": "browser-server.get_dom",
+      "args": {},
+      "timeout_secs": 15,
+      "on_failure": "retry"
+    },
+    {
+      "id": "select-address",
+      "prompt": "You are looking at the DOM of a BT Wholesale broadband availability page. An address list or dropdown is displayed. Find the address that best matches: \"{{variables.full_address}}\"\n\nReturn ONLY a JSON object with:\n- \"selector\": a CSS selector that uniquely identifies the matching address element (prefer option value selectors or data attributes)\n- \"matched_address\": the exact text of the address you matched\n\nIf you see a <select> dropdown, use option[value=\"...\"] as the selector. If it's a list of clickable elements, use the most specific selector available.",
+      "context_from": ["get-address-dom"],
+      "timeout_secs": 60
+    },
+    {
+      "id": "click-address",
+      "tool": "browser-server.click",
+      "args": {
+        "selector": "{{steps.select-address.selector}}"
+      },
+      "timeout_secs": 15,
+      "on_failure": "llm_assist"
+    },
+    {
+      "id": "wait-results",
+      "tool": "browser-server.wait",
+      "args": {
+        "time": 30000
+      },
+      "timeout_secs": 35
+    },
+    {
+      "id": "get-results-dom",
+      "tool": "browser-server.get_dom",
+      "args": {},
+      "timeout_secs": 15,
+      "on_failure": "retry"
+    },
+    {
+      "id": "extract-results",
+      "prompt": "You are looking at the DOM of a BT Wholesale broadband availability results page for the address: \"{{variables.full_address}}\".\n\nExtract all available broadband packages/products. Return a JSON object with:\n- \"address\": the confirmed address shown on the page\n- \"packages\": an array of objects, each with:\n  - \"name\": package/product name\n  - \"download_speed\": download speed (e.g., \"80 Mbps\")\n  - \"upload_speed\": upload speed if shown\n  - \"technology\": technology type (FTTP, FTTC, ADSL, etc.) if shown\n  - \"availability\": availability status (available, not available, coming soon, etc.)\n  - \"notes\": any additional notes or conditions\n\nReturn ONLY the JSON, no explanation.",
+      "context_from": ["get-results-dom"],
+      "timeout_secs": 90
+    },
+    {
+      "id": "screenshot",
+      "tool": "browser-server.screenshot",
+      "args": {
+        "full_page": true
+      },
+      "timeout_secs": 15,
+      "on_failure": "skip"
+    }
+  ],
+  "output": {
+    "results": "{{steps.extract-results}}",
+    "matched_address": "{{steps.select-address.matched_address}}",
+    "screenshot": "{{steps.screenshot}}"
+  }
+}

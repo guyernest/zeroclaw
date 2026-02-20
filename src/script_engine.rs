@@ -5,9 +5,10 @@
 //! dispatches each step directly to the appropriate MCP tool. This implements
 //! the Split-Brain LLM Model (Section 11) from the architecture doc.
 //!
-//! Two step types are supported:
+//! Three step types are supported:
 //! - **Tool steps** (`"tool": "server.tool_name"`) — direct MCP tool call
 //! - **Code-mode steps** (`"tool_mode": "code"`) — calls `validate_code` then `execute_code`
+//! - **Prompt steps** (`"prompt": "..."`) — proactive LLM invocation with optional context
 
 use crate::config::ScriptEngineConfig;
 use crate::observability::Observer;
@@ -45,6 +46,11 @@ pub struct ScriptStep {
     pub server: Option<String>,
     #[serde(default)]
     pub code: Option<String>,
+    // Tier 3: LLM prompt step
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub context_from: Option<Vec<String>>,
     // Common
     #[serde(default = "default_step_timeout")]
     pub timeout_secs: u64,
@@ -148,7 +154,7 @@ impl ScriptEngine {
             let result = tokio::time::timeout_at(
                 // Use the earlier of step timeout and script deadline
                 script_deadline.min(tokio::time::Instant::now() + step_timeout),
-                Self::execute_step(step, tools_registry, &step_results, script),
+                Self::execute_step(step, tools_registry, &step_results, script, provider, model),
             )
             .await;
 
@@ -203,7 +209,7 @@ impl ScriptEngine {
                                 );
                                 let retry_result = tokio::time::timeout_at(
                                     script_deadline.min(tokio::time::Instant::now() + step_timeout),
-                                    Self::execute_step(step, tools_registry, &step_results, script),
+                                    Self::execute_step(step, tools_registry, &step_results, script, provider, model),
                                 )
                                 .await;
 
@@ -353,6 +359,8 @@ impl ScriptEngine {
         tools_registry: &[Box<dyn Tool>],
         step_results: &HashMap<String, serde_json::Value>,
         script: &Script,
+        provider: Option<&dyn Provider>,
+        model: &str,
     ) -> anyhow::Result<serde_json::Value> {
         if let Some(ref tool_name) = step.tool {
             // Tier 1: direct tool call
@@ -360,9 +368,12 @@ impl ScriptEngine {
         } else if step.tool_mode.as_deref() == Some("code") {
             // Tier 2: code-mode
             Self::execute_code_step(step, tools_registry, step_results, script).await
+        } else if step.prompt.is_some() {
+            // Tier 3: LLM prompt
+            Self::execute_prompt_step(step, step_results, script, provider, model).await
         } else {
             anyhow::bail!(
-                "Step '{}' has neither 'tool' nor 'tool_mode: code'",
+                "Step '{}' has no 'tool', 'tool_mode: code', or 'prompt'",
                 step.id
             );
         }
@@ -463,6 +474,73 @@ impl ScriptEngine {
         tool_result_to_value(&execute_result, step)
     }
 
+    /// Tier 3: Proactive LLM prompt step.
+    ///
+    /// Resolves `{{...}}` templates in the prompt string, appends output from
+    /// `context_from` steps as additional context, then calls the LLM and
+    /// parses the response as JSON (falling back to a plain string).
+    async fn execute_prompt_step(
+        step: &ScriptStep,
+        step_results: &HashMap<String, serde_json::Value>,
+        script: &Script,
+        provider: Option<&dyn Provider>,
+        model: &str,
+    ) -> anyhow::Result<serde_json::Value> {
+        let provider = provider
+            .ok_or_else(|| anyhow::anyhow!("Prompt step '{}' requires an LLM provider", step.id))?;
+
+        let raw_prompt = step
+            .prompt
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("Prompt step '{}' missing 'prompt' field", step.id))?;
+
+        // Resolve templates in the prompt string
+        let resolved_value = resolve_templates(
+            &serde_json::Value::String(raw_prompt.to_string()),
+            &script.variables,
+            step_results,
+        );
+        let mut prompt = resolved_value
+            .as_str()
+            .unwrap_or(raw_prompt)
+            .to_string();
+
+        // Append context from referenced steps
+        if let Some(context_ids) = &step.context_from {
+            for ctx_id in context_ids {
+                if let Some(ctx_val) = step_results.get(ctx_id.as_str()) {
+                    let ctx_str = match ctx_val {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
+                    // Truncate large contexts to keep prompt manageable
+                    let truncated = if ctx_str.len() > 8000 {
+                        &ctx_str[..8000]
+                    } else {
+                        ctx_str.as_str()
+                    };
+                    use std::fmt::Write;
+                    let _ = write!(prompt, "\n\n--- Context from step '{ctx_id}' ---\n{truncated}");
+                }
+            }
+        }
+
+        let response = provider.simple_chat(&prompt, model, 0.2).await?;
+
+        // Try to parse as JSON; fall back to plain string
+        let parsed = serde_json::from_str::<serde_json::Value>(response.trim())
+            .unwrap_or_else(|_| serde_json::Value::String(response.trim().to_string()));
+
+        // Apply output_key wrapping
+        if let Some(key) = &step.output_key {
+            let mut map = serde_json::Map::new();
+            map.insert(key.clone(), parsed);
+            Ok(serde_json::Value::Object(map))
+        } else {
+            Ok(parsed)
+        }
+    }
+
     /// LLM-assisted recovery: ask the local LLM to diagnose and fix a failed step.
     #[allow(clippy::too_many_arguments)]
     async fn llm_assist(
@@ -544,7 +622,7 @@ impl ScriptEngine {
         // Retry with corrected step
         let retry_result = tokio::time::timeout_at(
             deadline,
-            Self::execute_step(&corrected_step, tools_registry, step_results, script),
+            Self::execute_step(&corrected_step, tools_registry, step_results, script, Some(provider), model),
         )
         .await
         .map_err(|_| "Corrected step timed out".to_string())?
@@ -998,6 +1076,213 @@ mod tests {
         ScriptEngineConfig::default()
     }
 
+    struct MockProvider {
+        response: String,
+    }
+
+    #[async_trait]
+    impl Provider for MockProvider {
+        async fn chat_with_system(
+            &self,
+            _system_prompt: Option<&str>,
+            _message: &str,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<String> {
+            Ok(self.response.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_prompt_step_json_response() {
+        let provider = MockProvider {
+            response: r##"{"selector": "#addr-3", "matched_address": "42 Test St"}"##.into(),
+        };
+        let tools: Vec<Box<dyn Tool>> = vec![];
+
+        let script = Script {
+            version: "1.0".into(),
+            name: "prompt-test".into(),
+            variables: serde_json::json!({"address": "42 Test Street"}),
+            steps: vec![ScriptStep {
+                id: "select".into(),
+                tool: None,
+                args: None,
+                tool_mode: None,
+                server: None,
+                code: None,
+                prompt: Some("Find the address matching {{variables.address}}".into()),
+                context_from: None,
+                timeout_secs: 30,
+                output_key: None,
+                on_failure: None,
+            }],
+            output: None,
+        };
+
+        let observer = crate::observability::NoopObserver;
+        let config = default_config();
+        let result = ScriptEngine::execute(
+            &script,
+            &tools,
+            Some(&provider),
+            "test-model",
+            &observer,
+            &config,
+        )
+        .await;
+
+        assert!(result.success);
+        assert_eq!(result.execution_details.steps_succeeded, 1);
+        let step_output = result.output.get("select").unwrap();
+        assert_eq!(step_output["selector"], "#addr-3");
+        assert_eq!(step_output["matched_address"], "42 Test St");
+    }
+
+    #[tokio::test]
+    async fn execute_prompt_step_with_context_from() {
+        let provider = MockProvider {
+            response: r#"{"speed": "80Mbps", "price": "£29.99"}"#.into(),
+        };
+        let tools: Vec<Box<dyn Tool>> = vec![Box::new(MockTool {
+            tool_name: "browser-server.get_dom".into(),
+            response: r#"{"dom": "<div>broadband packages here</div>"}"#.into(),
+        })];
+
+        let script = Script {
+            version: "1.0".into(),
+            name: "context-test".into(),
+            variables: serde_json::json!({}),
+            steps: vec![
+                ScriptStep {
+                    id: "get-dom".into(),
+                    tool: Some("browser-server.get_dom".into()),
+                    args: None,
+                    tool_mode: None,
+                    server: None,
+                    code: None,
+                    prompt: None,
+                    context_from: None,
+                    timeout_secs: 30,
+                    output_key: None,
+                    on_failure: None,
+                },
+                ScriptStep {
+                    id: "extract".into(),
+                    tool: None,
+                    args: None,
+                    tool_mode: None,
+                    server: None,
+                    code: None,
+                    prompt: Some("Extract broadband data from the DOM".into()),
+                    context_from: Some(vec!["get-dom".into()]),
+                    timeout_secs: 30,
+                    output_key: None,
+                    on_failure: None,
+                },
+            ],
+            output: None,
+        };
+
+        let observer = crate::observability::NoopObserver;
+        let config = default_config();
+        let result = ScriptEngine::execute(
+            &script,
+            &tools,
+            Some(&provider),
+            "test-model",
+            &observer,
+            &config,
+        )
+        .await;
+
+        assert!(result.success);
+        assert_eq!(result.execution_details.steps_succeeded, 2);
+        let extract_output = result.output.get("extract").unwrap();
+        assert_eq!(extract_output["speed"], "80Mbps");
+        assert_eq!(extract_output["price"], "£29.99");
+    }
+
+    #[tokio::test]
+    async fn execute_prompt_step_plain_text_fallback() {
+        let provider = MockProvider {
+            response: "This is not valid JSON, just plain text".into(),
+        };
+        let tools: Vec<Box<dyn Tool>> = vec![];
+
+        let script = Script {
+            version: "1.0".into(),
+            name: "plain-text-test".into(),
+            variables: serde_json::json!({}),
+            steps: vec![ScriptStep {
+                id: "ask".into(),
+                tool: None,
+                args: None,
+                tool_mode: None,
+                server: None,
+                code: None,
+                prompt: Some("What is the meaning of life?".into()),
+                context_from: None,
+                timeout_secs: 30,
+                output_key: None,
+                on_failure: None,
+            }],
+            output: None,
+        };
+
+        let observer = crate::observability::NoopObserver;
+        let config = default_config();
+        let result = ScriptEngine::execute(
+            &script,
+            &tools,
+            Some(&provider),
+            "test-model",
+            &observer,
+            &config,
+        )
+        .await;
+
+        assert!(result.success);
+        let step_output = result.output.get("ask").unwrap();
+        assert_eq!(
+            step_output.as_str().unwrap(),
+            "This is not valid JSON, just plain text"
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_prompt_step_no_provider_fails() {
+        let tools: Vec<Box<dyn Tool>> = vec![];
+
+        let script = Script {
+            version: "1.0".into(),
+            name: "no-provider-test".into(),
+            variables: serde_json::json!({}),
+            steps: vec![ScriptStep {
+                id: "ask".into(),
+                tool: None,
+                args: None,
+                tool_mode: None,
+                server: None,
+                code: None,
+                prompt: Some("Hello".into()),
+                context_from: None,
+                timeout_secs: 30,
+                output_key: None,
+                on_failure: None,
+            }],
+            output: None,
+        };
+
+        let observer = crate::observability::NoopObserver;
+        let config = default_config();
+        let result =
+            ScriptEngine::execute(&script, &tools, None, "test-model", &observer, &config).await;
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("requires an LLM provider"));
+    }
+
     #[tokio::test]
     async fn execute_chained_tool_steps() {
         let tools: Vec<Box<dyn Tool>> = vec![
@@ -1027,6 +1312,8 @@ mod tests {
                     tool_mode: None,
                     server: None,
                     code: None,
+                    prompt: None,
+                    context_from: None,
                     timeout_secs: 30,
                     output_key: None,
                     on_failure: None,
@@ -1038,6 +1325,8 @@ mod tests {
                     tool_mode: None,
                     server: None,
                     code: None,
+                    prompt: None,
+                    context_from: None,
                     timeout_secs: 30,
                     output_key: None,
                     on_failure: None,
@@ -1049,6 +1338,8 @@ mod tests {
                     tool_mode: None,
                     server: None,
                     code: None,
+                    prompt: None,
+                    context_from: None,
                     timeout_secs: 30,
                     output_key: None,
                     on_failure: None,
@@ -1110,6 +1401,8 @@ mod tests {
                     tool_mode: None,
                     server: None,
                     code: None,
+                    prompt: None,
+                    context_from: None,
                     timeout_secs: 10,
                     output_key: None,
                     on_failure: None, // default = Abort
@@ -1121,6 +1414,8 @@ mod tests {
                     tool_mode: None,
                     server: None,
                     code: None,
+                    prompt: None,
+                    context_from: None,
                     timeout_secs: 10,
                     output_key: None,
                     on_failure: None,
@@ -1132,6 +1427,8 @@ mod tests {
                     tool_mode: None,
                     server: None,
                     code: None,
+                    prompt: None,
+                    context_from: None,
                     timeout_secs: 10,
                     output_key: None,
                     on_failure: None,
@@ -1180,6 +1477,8 @@ mod tests {
                     tool_mode: None,
                     server: None,
                     code: None,
+                    prompt: None,
+                    context_from: None,
                     timeout_secs: 10,
                     output_key: None,
                     on_failure: Some(FailureStrategy::Skip),
@@ -1191,6 +1490,8 @@ mod tests {
                     tool_mode: None,
                     server: None,
                     code: None,
+                    prompt: None,
+                    context_from: None,
                     timeout_secs: 10,
                     output_key: None,
                     on_failure: None,
